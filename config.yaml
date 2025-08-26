@@ -1,6 +1,10 @@
 
 flex: 0
+top_n: 3 # doesn work for normal matching
+# how many options you wanna see (desceding order in terms of closeness)
 # 0 for toe to toe; 1 for flexible matching
+
+output_path: "output.xlsx"
 
 ########################################################  input file   ###########################################################################
 
@@ -16,7 +20,7 @@ sku_cate_num: 4
 
 ## do translation? (work for non english data)
 trans_file: 0 # 0 for no, 1 for yes
-
+trans_file_path: "date_file_translation.joblib"
 
 ######################################################## target file   ###########################################################################
 
@@ -30,4 +34,5 @@ cate_main_num: 4
 
 ## do translation? (work for non english data)
 trans_cate: 0 # 0 for no, 1 for yes
+trans_cate_path: "date_cate_translation.joblib"
 

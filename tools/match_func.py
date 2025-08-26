@@ -74,3 +74,12 @@ def translate(text, tolerance=3):
 
 def embedding_one(text_list):
   return model.encode(text_list, batch_size=12)
+
+
+def get_it(num):
+  i = 0
+  while num // 10**i > 10:
+    i += 1
+  tens = 10**i
+  return num//tens * tens
+
