@@ -1,0 +1,33 @@
+
+flex: 0
+# 0 for toe to toe; 1 for flexible matching
+
+########################################################  input file   ###########################################################################
+
+# input file 
+input_file : "fileexample.xlsx"
+
+## the categories (sku name, optional) to be considered 
+file_cols: ["cate1", "cate2", "cate3", "cate4", "sku_name"] # 1. always put the sku_name at the end 2. make sure it's ascedning order
+
+## to what level we wanna do matching: category level, including sku_name?
+consider_sku_name: 1 # 1 consider sku name, 0 not to consider
+sku_cate_num: 4
+
+## do translation? (work for non english data)
+trans_file: 0 # 0 for no, 1 for yes
+
+
+######################################################## target file   ###########################################################################
+
+# target file
+# the one we wanna do matching
+target_file : "cate.xlsx"
+cate_cols: ['cate1', 'cate2', 'cate3', 'cate4'] 
+
+## to what level of the target: category level
+cate_main_num: 4
+
+## do translation? (work for non english data)
+trans_cate: 0 # 0 for no, 1 for yes
+
