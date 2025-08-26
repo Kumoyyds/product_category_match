@@ -27,12 +27,12 @@ trans_file_path: "date_file_translation.joblib"
 # target file
 # the one we wanna do matching
 target_file : "cate.xlsx"
-cate_cols: ['cate1', 'cate2', 'cate3', 'cate4'] 
+cate_cols: ['cate1', 'cate2', 'cate3'] 
 
 ## to what level of the target: category level
-cate_main_num: 4
+cate_main_num: 3
 
 ## do translation? (work for non english data)
-trans_cate: 0 # 0 for no, 1 for yes
+trans_cate: 1 # 0 for no, 1 for yes
 trans_cate_path: "date_cate_translation.joblib"
 

@@ -2,12 +2,6 @@ import math
 from sentence_transformers import SentenceTransformer
 import heapq
 import os
-from openai import OpenAI
-from dotenv import load_dotenv
-
-load_dotenv()
-# the key for qwen-turbo, for translation 
-api_key = os.getenv('qwen_api')
 
 model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
 
@@ -39,36 +33,6 @@ def weight(k, p, aj=2.5):
   total = sum([math.log(aj+i) for i in range(p)])
   return math.log(k+aj-1)/total
 
-
-
-def translate(text, tolerance=3):
-  t = 0 # tolerance
-  result = 'error'
-  while t<tolerance:
-    try:
-      client = OpenAI(
-          api_key=api_key,
-          base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
-      )
-
-      completion = client.chat.completions.create(
-          model="qwen-turbo",
-          messages=[
-              {"role": "system", "content": 'you are translating category names in the context of online retailer'},
-              {"role": "user", "content": f'translate it into english, only output your translation:\n {text}'},
-          ],
-          stream=False,
-          extra_body={"enable_thinking": False}
-      )
-      response_json = completion.model_dump(mode='json')
-      result = response_json['choices'][0]['message']['content']
-      break
-    except:
-      print(f'fail {t+1} ')
-      t+=1
-      continue
-
-  return result
 
 
 

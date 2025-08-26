@@ -1,17 +1,16 @@
 import pandas as pd
-import math
 import concurrent.futures
 from tqdm import tqdm
 import numpy as np
 import joblib
-import copy
 import os
-import json
 from pathlib import Path
 print('loading match funcs...')
 from tools import match_func as match
+from tools import trans 
 print('succeed\n')
 import yaml
+
 
 
 
@@ -82,12 +81,36 @@ sentence_cate = remove_na(sentence_cate)
 ##### the final result
 print('**begin doing embedding**\n')
 print('file embedding')
+
+
+
+
+
 emb_dic = {}
+try:
+    cache_t_file = joblib.load(trans_file_path)
+except:
+    cache_t_file = {}
+
+try:
+    cache_t_cate = joblib.load(trans_cate_path)
+except:
+    cache_t_cate = {}
+
+cache = cache_t_file | cache_t_cate
+
+def translate_with_cache(text, cache = cache):
+    if text in cache:
+        return cache[text]
+    else:
+       return trans.translate(text)
+
+   
 if trans_file:
   print('Do the translation for sku information\n')
   # then the category
   with concurrent.futures.ThreadPoolExecutor(max_workers=16) as executor:
-    sentence_eng = list(tqdm(executor.map(match.translate, sentence), total=len(sentence)))
+    sentence_eng = list(tqdm(executor.map(translate_with_cache, sentence), total=len(sentence)))
   print('Do the embedding on english sentence, pls be patient\n')
   embedding = match.embedding_one(sentence_eng)
   translated_file = {i:j for i,j in zip(sentence,sentence_eng)}
@@ -107,7 +130,7 @@ print('target category embedding')
 if trans_cate:
   print('Do the translation for target cate information')
   with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
-    sentence_cate_eng = list(tqdm(executor.map(match.translate, sentence_cate), total=len(sentence_cate)))
+    sentence_cate_eng = list(tqdm(executor.map(translate_with_cache, sentence_cate), total=len(sentence_cate)))
   print('Do the embedding on the english cate infor, pls be patient\n')
   embedding_cate = match.embedding_one(sentence_cate_eng)
   translated_cate = {i:j for i,j in zip(sentence_cate, sentence_cate_eng)}
@@ -248,7 +271,7 @@ else:
             add_result[f'cate_match{i+1}_sim'].append(sims[top_k[i]])
     add_result = pd.DataFrame(add_result)
     final = pd.concat([mid_result, add_result], axis=1)
-    
+
 final.reset_index(drop=True, inplace=True)
 final.to_excel(output_path, index=False)
 print('\n***task is finished, pleae find the result in the ouput folder***\n')
