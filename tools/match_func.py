@@ -3,7 +3,8 @@ from sentence_transformers import SentenceTransformer
 import heapq
 import os
 
-model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2')
+model_path = os.getcwd() + '/model/all-mpnet-base-v2'
+model = SentenceTransformer(model_path)
 
 # embeddings = model.encode(sentences)
 def top_k_indices(arr, k):
