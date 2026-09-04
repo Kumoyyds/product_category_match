@@ -16,6 +16,7 @@ matching:
   algo: "tree_based"                    # weighed_embedding | tree_based
   max_level: 3                          # deepest taxonomy level to match to
   flexible: true                        # true: level <= max_level; false: level == max_level
+  beam_width: 3                         # tree_based only: candidates kept per level
 
 embedding:
   model_path: "model/all-mpnet-base-v2" # local sentence-transformers weights

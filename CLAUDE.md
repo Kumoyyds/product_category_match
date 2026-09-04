@@ -61,11 +61,11 @@ config.yaml ─► main.py ─► catmatch.Matcher.match(records, taxonomy)
 
 **Two algorithms** (`matching.algo`):
 - `weighed_embedding` — each candidate path collapses into one weighted vector; compare all candidates at once. Candidate set = full-depth paths, or (flexible) every prefix of depth 1..`max_level`.
-- `tree_based` — greedy top-1 descent: at each level, score only the children of the node already chosen, using the *same* whole-record input vector throughout.
+- `tree_based` — beam search: at each level, score only the children of the paths still in the beam (using the *same* whole-record input vector throughout) and keep the best `beam_width` of them, all of them when there are fewer. A node with no children drops out of the beam but stays in the candidate pool. The winner is picked from that pool the `weighed_embedding` way — one composed vector per surviving path — so `sim` means the same thing in both algorithms.
 
 **`flexible`** (one key, two implementations):
 - `false` → depth is fixed at `max_level` (a branch that hits a leaf earlier still stops there).
-- `true` → `weighed_embedding` lets shallow prefixes compete in the global pool; `tree_based` stops as soon as the best child's similarity fails to beat the current node's.
+- `true` → `weighed_embedding` lets shallow prefixes compete in the global pool; `tree_based` puts every path the beam held at every level into the candidate pool, so the final weighed pick chooses the depth.
 
 **Output**: original input columns + `cat_1..cat_k` + `match_level` + `sim`. `k` is the deepest level any row reached; shallower rows leave the rest empty. A record with no usable text yields `'error'` in all three result columns.
 
@@ -82,6 +82,6 @@ config.yaml ─► main.py ─► catmatch.Matcher.match(records, taxonomy)
 
 ## Development notes
 
-- Design notes live in `plans/*.md`, written in Chinese (README/commits are English). [plans/0904_matching_pipeline_redesign.md](plans/0904_matching_pipeline_redesign.md) records the 20 decisions behind the current architecture — read it before changing the pipeline shape.
+- Design notes live in `plans/*.md`, written in Chinese (README/commits are English). [plans/0904_matching_pipeline_redesign.md](plans/0904_matching_pipeline_redesign.md) records the 21 decisions behind the current architecture — read it before changing the pipeline shape.
 - The dev environment is Windows with the repo inside a OneDrive-synced folder; `.venv/` holds tens of thousands of files, slow to sync but harmless.
 - `.gitignore` also ignores a misspelled legacy `playground.ipynn` entry — leave it alone.

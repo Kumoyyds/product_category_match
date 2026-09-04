@@ -109,6 +109,7 @@ class MatchingConfig:
     algo: str = "tree_based"
     max_level: int = 3
     flexible: bool = True
+    beam_width: int = 3  # tree_based only: candidates kept per level
 
     ALGOS = ("weighed_embedding", "tree_based")
 
@@ -117,6 +118,8 @@ class MatchingConfig:
             raise ValueError(f"algo must be one of {self.ALGOS}, got {self.algo!r}")
         if self.max_level <= 0:
             raise ValueError("max_level must be positive")
+        if self.beam_width <= 0:
+            raise ValueError("beam_width must be positive")
 
 
 @dataclass

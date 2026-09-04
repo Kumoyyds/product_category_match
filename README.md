@@ -15,8 +15,8 @@ any->sku_name ×
 
 **supports**:
 
-1. two matching algorithms — `weighed_embedding` (collapse each taxonomy path into one weighted vector and compare them all at once) and `tree_based` (walk down the taxonomy one level at a time, always taking the closest sibling)
-2. two matching depths — fixed at `max_level`, or `flexible` (stop as soon as going deeper stops helping)
+1. two matching algorithms — `weighed_embedding` (collapse each taxonomy path into one weighted vector and compare them all at once) and `tree_based` (beam search down the taxonomy keeping `beam_width` candidates per level, then pick the best surviving path the weighed way)
+2. two matching depths — fixed at `max_level`, or `flexible` (shallower paths compete too, so a record only goes as deep as it deserves)
 3. usable both as a batch script (`uv run main.py`) and as an importable module (`from catmatch import Matcher`)
 
 ## Preparation
@@ -58,7 +58,7 @@ The taxonomy may be ragged — a row that runs out of levels is a leaf, and matc
 
 1. put your files in **input_data/** (records to match) and **data/** (the taxonomy)
 
-2. adjust **config.yaml** — mainly `matching.algo`, `matching.max_level` and `matching.flexible`
+2. adjust **config.yaml** — mainly `matching.algo`, `matching.max_level`, `matching.flexible` and, for `tree_based`, `matching.beam_width`
 
 3. run `uv run main.py` (no need to activate the venv)
 

@@ -44,6 +44,30 @@
 | ✅ 19 | 输出**保留 `match_level` 列**（见 [§3.5](#35-输出格式)）。 |
 | ✅ 20 | 施工在新分支 **`refactor/catmatch-module`** 上进行，**不动 `main`**。 |
 
+## 第五轮：tree_based 改成 beam search（推翻决定 4）
+
+| # | 决定 |
+|---|---|
+| ✅ 21 | **tree_based 不再是纯贪心**（决定 4 作废）。新增 `beam_width`：每层保留 `beam_width` 个候选，候选不足就取当前全部；某个节点没有下一层就地终止（该路径仍留在候选池里）。走完之后候选池里有多条路径，**再用 weighed_embedding 的方式（整条路径加权合成一个向量）从中选最佳**。 |
+
+**为什么改**：纯贪心第一层选错就再也救不回来 —— 样例里 "Nonstick Frying Pan 28cm" 第一层被判进 `Furniture`，后面全废。beam 保留多条线，最后统一用加权向量重排。样例上的效果（20 行，max_level=3）：
+
+| beam_width | flexible=true 平均 sim | 与 weighed 全局最优一致 |
+|---|---|---|
+| 1 | 0.7341 | 14/20 |
+| 3 | 0.7732 | 17/20 |
+| 5 | 0.7737 | 18/20 |
+| 10 | 0.7737 | 18/20 |
+
+beam=3 已经吃掉大部分收益，5 以后基本饱和；那口平底锅在 beam≥3 时正确落到 `Home & Garden > Kitchen & Dining > Cookware & Bakeware`。默认值取 **3**。
+
+**flexible 在新算法下的含义**（原「sim 不再上升就停」的逐层判据随之作废，深度改由最后那次加权重排决定）：
+
+- `flexible: false` → 候选池只收**走到 `max_level` 的路径** + 中途触底的叶子（它们没法更深）。
+- `flexible: true` → 候选池收**每一层 beam 里的所有路径**，浅层前缀也参与最后的重排。
+
+`beam_width` 只对 tree_based 生效；`beam_width: 1` 不等于旧的纯贪心 —— 下钻过程一样，但最终仍会在「沿途各层前缀」里用加权方式重排。
+
 ---
 
 ## 图 1 · 输入侧：Input → Input embedding
@@ -135,7 +159,7 @@ flowchart LR
 **这对 tree_based 有两个直接影响：**
 
 1. 「某层的候选集」= 在已选前缀下、该层非空的 distinct 值 —— 就是这张表按前缀 groupby 的结果。
-2. **分支可能在 `max_level` 之前就到叶子**（比如 `Animals & Pet Supplies > Live Animals` 没有第 3 层）。即使 `flexible: false`，也必须允许「走不下去就停」。❓ 这种触底要不要在输出里和「flexible 收敛停」区分开？
+2. **分支可能在 `max_level` 之前就到叶子**（比如 `Animals & Pet Supplies > Live Animals` 没有第 3 层）。即使 `flexible: false`，也必须允许「走不下去就停」—— 这类路径照样留在候选池里参与最后的重排。输出不区分「触底停」和「重排选浅」（决定 13：不输出轨迹）。
 
 ### 2.3 embedding 的粒度
 
@@ -209,7 +233,7 @@ flowchart LR
 1. 基于 embedding 近似度，**在 `cat_1` 的选项里选**一个；
 2. 在 `selected_cat_1` 下的 `cat_2` 选项里再选，**so on and so forth**。
 
-✅ 每层只保留 **top-1**（纯贪心，决定 4）。每层候选集被上一层的选择裁剪，与现在「全路径打平比较」本质不同：候选数从 5595 条路径降到每层几个到几十个，且相似度只在**兄弟节点之间**比较，不受路径长度影响。
+⚠️ 决定 4（纯贪心 top-1）已被**决定 21 推翻**：每层保留 `beam_width` 条候选，最后用 weighed 方式重排。图上写的「选一个」现在是「选 beam_width 个」，其余不变 —— 每层候选集仍被上一层的选择裁剪，相似度仍只在**兄弟节点之间**比较，候选数从 5595 条路径降到每层几个到几十个。
 
 ✅ 决定 8：每层算相似度时，input 侧固定用**整条输入合成的那一个 input embedding**（`level_1..level_n` 加权求和的结果），不逐层拆开。也就是说下钻过程中 `sim(cat_t, input)` 的 `input` 恒定，变的只有候选集 —— 输入层数和 taxonomy 层数因此**不需要对齐**。
 
@@ -231,10 +255,7 @@ flowchart LR
 **两种算法各自的 flexible 实现：**
 
 - **`weighed_embedding` + flexible —— 已存在**（[main.py:231-271](main.py#L231-L271)）：把 taxonomy 在 1..`max_level` 每一层各 dedup 一次，所有前缀路径铺平成一个大候选池（每条路径按自己的层数做权重合成向量），全局比一次相似度取最高的一条（✅ 决定 9：原来的 `top_n` 输出改成 top-1）。命中哪条路径，它的层数就是匹配到的 level。
-- **`tree_based` + flexible —— 待实现**（图上原文）：
-  > 比较 `sim(cat_t, input)` 和 `sim(cat_t+1 (best), input)`，如果 `sim(cat_t, input) >= sim_t+1` 就停在 `t`。
-
-  即**下钻一层若不能提升相似度就停** —— 贪心过程中相似度不再上升即收敛。再叠加 §2.2 的参差深度：走到叶子也必须停。
+- **`tree_based` + flexible —— 已按决定 21 实现**。图上原写的逐层判据（`sim(cat_t, input) >= sim(cat_t+1 best, input)` 就停在 t）在 beam search 下作废：深度不再由逐层比较决定，而是**把沿途每层的候选路径一起丢进最后那次加权重排**，谁分高谁赢。`flexible: false` 时候选池只留走到 `max_level` 的路径。两种情况下，中途触底的叶子都留在池里（§2.2 的参差深度）。
 
 ### 3.4 与现有 config 的对应关系
 
@@ -546,6 +567,8 @@ flowchart TB
 3. **`pyproject.toml` 去掉 `package = false`**，加 hatchling build backend，`uv sync` 会把 `catmatch` 装进 venv，于是任何目录下都能 `import catmatch`（这是「做成 module」的应有之义）。
 4. **逐行 try/except 收窄**：老代码把任何行内异常都写成 `'error'`（顺手吞掉真 bug）。现在只有「整行没有可用文本」才产出 `'error'`，其余异常直接抛。
 5. **清理**：`cache/date_cate_translation.joblib` 删除并取消跟踪，`.gitignore` 加 `cache/` 和 `output/`，`output/output.xlsx` 取消跟踪，`.env.sample` 从 `qwen_api` 改成 `api_key` / `base_url` / `model`。
+
+6. **tree_based 改成 beam search**（决定 21）：`MatchingConfig.beam_width`（默认 3），`TreeBasedMatcher._descend()` 逐层扩展 + 截断，`best_of()` 用加权合成向量在候选池里重排。合成打分与 weighed_embedding 完全同一套代码，所以两种算法的 `sim` 可比。
 
 四种组合（两算法 × flexible 真假）都跑通了，20 行样例 + 5595 行 taxonomy；sqlite 二次运行命中全部 1562 个 element、完全不加载模型；压缩环节用 `.env` 里的真实端点验证过（>200 词触发、短文本跳过）。
 

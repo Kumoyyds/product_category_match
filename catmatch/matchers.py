@@ -5,11 +5,13 @@ taxonomy element -- and return a single path plus its similarity.
 
     weighed_embedding  collapse each taxonomy path into one weighted vector and
                        compare all of them at once (the original algorithm)
-    tree_based         walk down the taxonomy one level at a time, always taking
-                       the best sibling (greedy, top-1)
+    tree_based         walk down the taxonomy one level at a time keeping the
+                       best `beam_width` candidates per level, then score the
+                       surviving paths with the weighed method and take the best
 
 `flexible` decides where a match stops: fixed at `max_level`, or anywhere
-shallower when going deeper stops helping.
+shallower when a shallower path scores better (a branch that runs out of
+children always stops there, whatever `flexible` says).
 """
 
 import math
@@ -17,7 +19,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .config import MatchingConfig
 from .embedding import l2_normalize
+
+Path = tuple[str, ...]
 
 
 def weight(k: int, p: int, aj: float = 2.5) -> float:
@@ -46,25 +51,34 @@ def compose(texts: list[str], emb: dict[str, np.ndarray]) -> np.ndarray:
     return l2_normalize(vector)
 
 
+def best_of(paths: list[Path], emb: dict[str, np.ndarray],
+            vector: np.ndarray) -> MatchResult:
+    """Score paths the weighed way -- one composed vector each -- and take the best."""
+    sims = [float(compose(list(p), emb) @ vector) for p in paths]
+    best = int(np.argmax(sims))
+    return MatchResult(list(paths[best]), sims[best])
+
+
 class WeighedEmbeddingMatcher:
     """Every candidate path becomes one vector; pick the closest of them all."""
 
-    def __init__(self, paths: list[tuple[str, ...]], emb: dict[str, np.ndarray],
-                 max_level: int, flexible: bool):
-        self.candidates = self._build_candidates(paths, max_level, flexible)
+    def __init__(self, paths: list[Path], emb: dict[str, np.ndarray],
+                 config: MatchingConfig):
+        self.candidates = self._build_candidates(paths, config)
         if not self.candidates:
             raise ValueError(
-                f"taxonomy has no path reaching level {max_level}; "
+                f"taxonomy has no path reaching level {config.max_level}; "
                 "lower max_level or set flexible: true"
             )
         self.matrix = np.vstack([compose(list(p), emb) for p in self.candidates])
 
     @staticmethod
-    def _build_candidates(paths: list[tuple[str, ...]], max_level: int,
-                          flexible: bool) -> list[tuple[str, ...]]:
+    def _build_candidates(paths: list[Path], config: MatchingConfig) -> list[Path]:
         """Fixed depth: only full-depth paths. Flexible: every prefix, 1..max_level."""
-        depths = range(1, max_level + 1) if flexible else (max_level,)
-        candidates: dict[tuple[str, ...], None] = {}
+        depths = (
+            range(1, config.max_level + 1) if config.flexible else (config.max_level,)
+        )
+        candidates: dict[Path, None] = {}
         for depth in depths:
             for path in paths:
                 if len(path) >= depth:
@@ -78,51 +92,66 @@ class WeighedEmbeddingMatcher:
 
 
 class TreeBasedMatcher:
-    """Greedy descent: at each level pick the best sibling under what was chosen."""
+    """Beam search down the taxonomy, then a weighed pick among the survivors.
 
-    def __init__(self, paths: list[tuple[str, ...]], emb: dict[str, np.ndarray],
-                 max_level: int, flexible: bool):
+    Each level scores only the children of the paths still in the beam, using the
+    same whole-record input vector throughout, and keeps the best `beam_width` of
+    them (all of them when there are fewer). A path whose node has no children
+    drops out of the beam but stays in the candidate pool -- the branch simply
+    ended. What lands in that pool at the end depends on `flexible`:
+
+        flexible=False  only the deepest paths reached (plus branches that ended early)
+        flexible=True   every path the beam held at every level
+
+    The winner is then chosen the weighed_embedding way, over that pool.
+    """
+
+    def __init__(self, paths: list[Path], emb: dict[str, np.ndarray],
+                 config: MatchingConfig):
         self.emb = emb
-        self.max_level = max_level
-        self.flexible = flexible
-        self.children = self._build_children(paths, max_level)
+        self.max_level = config.max_level
+        self.flexible = config.flexible
+        self.beam_width = config.beam_width
+        self.children = self._build_children(paths, config.max_level)
         if not self.children.get((), []):
             raise ValueError("taxonomy has no level-1 categories")
 
     @staticmethod
-    def _build_children(paths: list[tuple[str, ...]],
-                        max_level: int) -> dict[tuple[str, ...], list[str]]:
+    def _build_children(paths: list[Path], max_level: int) -> dict[Path, list[str]]:
         """prefix -> the distinct category names living directly under it."""
-        children: dict[tuple[str, ...], dict[str, None]] = {}
+        children: dict[Path, dict[str, None]] = {}
         for path in paths:
             for depth in range(min(len(path), max_level)):
                 parent = path[:depth]
                 children.setdefault(parent, {}).setdefault(path[depth], None)
         return {parent: list(names) for parent, names in children.items()}
 
-    def _best_child(self, prefix: tuple[str, ...],
-                    vector: np.ndarray) -> tuple[str, float] | None:
-        """The closest sibling under `prefix`, or None at a leaf."""
-        names = self.children.get(prefix)
-        if not names:
-            return None
-        sims = np.array([float(self.emb[name] @ vector) for name in names])
-        best = int(np.argmax(sims))
-        return names[best], float(sims[best])
+    def _descend(self, vector: np.ndarray) -> list[Path]:
+        """Run the beam search; return the candidate pool it leaves behind."""
+        beam: list[Path] = [()]
+        pool: dict[Path, None] = {}
+
+        for _ in range(self.max_level):
+            scored: list[tuple[float, Path]] = []
+            for prefix in beam:
+                names = self.children.get(prefix)
+                if not names:
+                    if prefix:
+                        pool.setdefault(prefix)  # branch ended before max_level
+                    continue
+                for name in names:
+                    scored.append((float(self.emb[name] @ vector), prefix + (name,)))
+
+            if not scored:
+                break  # nothing left to expand anywhere in the beam
+            scored.sort(key=lambda item: -item[0])
+            beam = [path for _, path in scored[: self.beam_width]]
+            if self.flexible:
+                pool.update(dict.fromkeys(beam))
+
+        pool.update(dict.fromkeys(beam))  # the deepest level reached
+        pool.pop((), None)
+        return list(pool)
 
     def match(self, vector: np.ndarray) -> MatchResult:
-        path: list[str] = []
-        sim = 0.0
-
-        while len(path) < self.max_level:
-            step = self._best_child(tuple(path), vector)
-            if step is None:
-                break  # leaf reached before max_level -- the branch simply ends
-            name, child_sim = step
-            # flexible: stop as soon as going one level deeper stops helping
-            if self.flexible and path and child_sim <= sim:
-                break
-            path.append(name)
-            sim = child_sim
-
-        return MatchResult(path, sim)
+        return best_of(self._descend(vector), self.emb, vector)

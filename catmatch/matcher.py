@@ -107,9 +107,7 @@ class Matcher:
         matcher_cls = (
             TreeBasedMatcher if algo == "tree_based" else WeighedEmbeddingMatcher
         )
-        matcher = matcher_cls(
-            paths, emb, self.config.matching.max_level, self.config.matching.flexible
-        )
+        matcher = matcher_cls(paths, emb, self.config.matching)
 
         print(f"matching {len(records)} record(s) with {algo} ...")
         cache: dict[tuple[str, ...], MatchResult] = {}
