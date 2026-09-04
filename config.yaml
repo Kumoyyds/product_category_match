@@ -1,38 +1,35 @@
+# English only -- this tool does not translate, the input must already be English.
 
-flex: 0
-top_n: 3 # doesn work for normal matching
-# how many options you wanna see (desceding order in terms of closeness)
-# 0 for toe to toe; 1 for flexible matching
+input:
+  path: "input_data/fileexample.xlsx"   # xlsx | csv | json | jsonl
+  # columns/keys must be level_1, level_2, ... level_n (ascending;
+  # the last one may be free text such as an SKU name)
 
-output_path: "output.xlsx"
+taxonomy:
+  path: "data/taxonomy.xlsx"            # xlsx | csv | json | jsonl
+  # columns/keys must be cat_1, cat_2, ... cat_n
 
-########################################################  input file   ###########################################################################
+output:
+  path: "output/output.xlsx"            # xlsx | csv | json | jsonl
 
-# input file 
-input_file : "fileexample.xlsx"
+matching:
+  algo: "tree_based"                    # weighed_embedding | tree_based
+  max_level: 3                          # deepest taxonomy level to match to
+  flexible: true                        # true: level <= max_level; false: level == max_level
 
-## the categories (sku name, optional) to be considered 
-file_cols: ["cate1", "cate2", "cate3", "cate4", "sku_name"] # 1. always put the sku_name at the end 2. make sure it's ascedning order
+embedding:
+  model_path: "model/all-mpnet-base-v2" # local sentence-transformers weights
+  model_name: "all-mpnet-base-v2"       # part of the db key, keeps models apart
+  batch_size: 12
+  db_path: "cache/embeddings.sqlite"    # taxonomy embeddings only
 
-## to what level we wanna do matching: category level, including sku_name?
-consider_sku_name: 1 # 1 consider sku name, 0 not to consider
-sku_cate_num: 4
-
-## do translation? (work for non english data)
-trans_file: 0 # 0 for no, 1 for yes
-trans_file_path: "date_file_translation.joblib"
-
-######################################################## target file   ###########################################################################
-
-# target file
-# the one we wanna do matching
-target_file : "cate.xlsx"
-cate_cols: ['cate1', 'cate2', 'cate3'] 
-
-## to what level of the target: category level
-cate_main_num: 3
-
-## do translation? (work for non english data)
-trans_cate: 0 # 0 for no, 1 for yes
-trans_cate_path: "date_cate_translation.joblib"
-
+compression:
+  enabled: true                         # shorten over-long input values first
+  threshold_words: 200                  # anything longer goes through the LLM
+  llm:
+    # api_key / base_url / model live in .env (api_key is required there)
+    temperature: 0.0                    # compression must be reproducible
+    concurrency: 4
+    request_timeout: 60
+    max_retries: 3
+    max_output_tokens: 512

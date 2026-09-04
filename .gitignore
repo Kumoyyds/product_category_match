@@ -1,3 +1,7 @@
 .venv
 .env
 playground.ipynn
+__pycache__/
+*.pyc
+cache/
+output/
