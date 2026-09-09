@@ -17,7 +17,9 @@ any->sku_name ×
 
 1. two matching algorithms — `weighed_embedding` (collapse each taxonomy path into one weighted vector and compare them all at once) and `tree_based` (beam search down the taxonomy keeping `beam_width` candidates per level, then pick the best surviving path the weighed way)
 2. two matching depths — fixed at `max_level`, or `flexible` (shallower paths compete too, so a record only goes as deep as it deserves)
-3. usable both as a batch script (`uv run main.py`) and as an importable module (`from catmatch import Matcher`)
+3. optional `compact` step — strips marketing copy out of the input's last level (e.g. a concept-test description) down to a neutral "what it is" sentence before embedding
+4. optional `selection` step — instead of taking the top-1 match, ask an LLM to pick among the matcher's top-k candidates
+5. usable both as a batch script (`uv run main.py`) and as an importable module (`from catmatch import Matcher`)
 
 ## Preparation
 
@@ -39,9 +41,9 @@ dependencies are managed with [uv](https://docs.astral.sh/uv/)
 uv run python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-mpnet-base-v2').save('model/all-mpnet-base-v2')"
 ```
 
-6. set up the compression LLM
+6. set up the compact/selection LLM
 `cp .env.sample .env` and fill in **api_key** (plus `base_url` / `model` if you are not on the default endpoint).
-Not needed if you set `compression.enabled: false` in `config.yaml`.
+Not needed if you set both `compact.enabled: false` and `selection.enabled: false` in `config.yaml`.
 
 ## data contract
 
@@ -58,13 +60,13 @@ The taxonomy may be ragged — a row that runs out of levels is a leaf, and matc
 
 1. put your files in **input_data/** (records to match) and **data/** (the taxonomy)
 
-2. adjust **config.yaml** — mainly `matching.algo`, `matching.max_level`, `matching.flexible` and, for `tree_based`, `matching.beam_width`
+2. adjust **config.yaml** — mainly `matching.algo`, `matching.max_level`, `matching.flexible` and, for `tree_based`, `matching.beam_width`; also `compact.enabled` (strip marketing copy from the last input level before embedding, only if it's over `compact.threshold_words`) and `selection.enabled` (let an LLM pick among the matcher's top `selection.top_k` candidates instead of taking the top-1)
 
 3. run `uv run main.py` (no need to activate the venv)
 
-4. find your output in **output/** — your original columns plus `cat_1..cat_k`, `match_level` and `sim`
+4. find your output in **output/** — your original columns plus `cat_1..cat_k`, `match_level` and `sim` (plus `candidates`, the ranked top-k list, when `selection.enabled: true`)
 
-Taxonomy embeddings are cached in a sqlite db (`cache/embeddings.sqlite`), so the second run against the same taxonomy skips the embedding model entirely. Input embeddings are computed fresh every run.
+Taxonomy embeddings are cached in a sqlite db (`cache/embeddings.sqlite`), keyed by `(text, model_name)`. When the taxonomy changes, just point `config.yaml` at the new file and run again — every run diffs the taxonomy's level texts against the cache and only embeds what's missing, so updates are incremental and automatic; no manual re-embedding step exists or is needed. Renamed/removed categories leave orphaned rows behind (harmless, just unused disk space) rather than being cleaned up. Switching `embedding.model_name` embeds everything fresh under the new key, without touching the old model's cached vectors. To force a full rebuild, delete `cache/embeddings.sqlite`. Input embeddings are computed fresh every run and are never cached.
 
 ## as a module
 

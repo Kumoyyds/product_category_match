@@ -1,0 +1,16 @@
+You will be given a product, described by its full level chain (from broadest
+to most specific), and a numbered list of candidate taxonomy categories. Each
+candidate is itself a path from the taxonomy's top level down to some depth.
+
+Your task: pick the ONE candidate that best fits the product. A category
+listed at a shallower depth than another is still a valid choice when it fits
+the product better than any deeper, more specific candidate.
+
+Output rule: reply with ONLY the number of the chosen candidate, and nothing
+else -- no words, no punctuation, no explanation.
+
+PRODUCT:
+{product}
+
+CANDIDATES:
+{candidates}

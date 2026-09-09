@@ -1,17 +1,19 @@
 """The one public entry point: `Matcher.match(records, taxonomy)`.
 
-It wires everything together -- contract checks, compression, embedding (cached
-on the taxonomy side only), then whichever algorithm the config asks for.
+It wires everything together -- contract checks, compact, embedding (cached
+on the taxonomy side only), whichever algorithm the config asks for, and
+(optionally) an LLM final pick among that algorithm's top-k candidates.
 """
 
 import numpy as np
 from tqdm import tqdm
 
 from . import io
-from .compress import Compressor
+from .compact import Compactor
 from .config import Config
 from .embedding import Embedder
 from .matchers import MatchResult, TreeBasedMatcher, WeighedEmbeddingMatcher, compose
+from .selection import Selector
 from .store import EmbeddingStore
 
 ERROR = "error"
@@ -21,7 +23,8 @@ class Matcher:
     def __init__(self, config: Config):
         self.config = config
         self.embedder = Embedder(config.embedding)
-        self.compressor = Compressor(config.compression)
+        self.compactor = Compactor(config.compact)
+        self.selector = Selector(config.selection) if config.selection.enabled else None
 
     # ---------------------------------------------------------------- helpers
 
@@ -75,13 +78,12 @@ class Matcher:
         return known
 
     def _input_embeddings(self, rows: list[list[str]]) -> dict[str, np.ndarray]:
-        """Compress the over-long values, then embed everything (never cached)."""
-        texts = list(dict.fromkeys(text for row in rows for text in row))
-        compressed = self.compressor.compress_all(texts)
+        """Compact each row's last level, then embed everything (never cached)."""
+        last_values = list(dict.fromkeys(row[-1] for row in rows if row))
+        compacted = self.compactor.compact_all(last_values)
         for row in rows:
-            for i, text in enumerate(row):
-                if text in compressed:
-                    row[i] = compressed[text]
+            if row and row[-1] in compacted:
+                row[-1] = compacted[row[-1]]
 
         texts = list(dict.fromkeys(text for row in rows for text in row))
         print(f"input: embedding {len(texts)} unique value(s) ...")
@@ -98,7 +100,7 @@ class Matcher:
         paths = self._taxonomy_paths(taxonomy, cat_cols)
         emb = self._taxonomy_embeddings(paths)
 
-        # the embedding text can differ from the original (compression), so keep both
+        # the embedding text can differ from the original (compact), so keep both
         originals = [self._record_levels(r, level_cols) for r in records]
         to_embed = [list(row) for row in originals]
         emb.update(self._input_embeddings(to_embed))
@@ -108,34 +110,69 @@ class Matcher:
             TreeBasedMatcher if algo == "tree_based" else WeighedEmbeddingMatcher
         )
         matcher = matcher_cls(paths, emb, self.config.matching)
+        top_k = self.config.selection.top_k if self.selector else 1
 
         print(f"matching {len(records)} record(s) with {algo} ...")
-        cache: dict[tuple[str, ...], MatchResult] = {}
-        results: list[MatchResult | None] = []
+        candidates: dict[tuple[str, ...], list[MatchResult]] = {}
+        keys: list[tuple[str, ...] | None] = []
         for row in tqdm(to_embed):
-            key = tuple(row)
-            if key not in cache:
-                cache[key] = matcher.match(compose(row, emb)) if row else None
-            results.append(cache[key])
+            key = tuple(row) if row else None
+            keys.append(key)
+            if key is not None and key not in candidates:
+                candidates[key] = matcher.match(compose(row, emb), k=top_k)
 
-        return self._to_records(records, results)
+        picks = self._select(candidates)
+        results = [
+            (candidates[key][picks[key]] if key and candidates[key] else None)
+            for key in keys
+        ]
+        cand_lists = [candidates.get(key) if key else None for key in keys]
 
-    @staticmethod
-    def _to_records(records: list[io.Record],
-                    results: list[MatchResult | None]) -> list[io.Record]:
-        """Input columns, then cat_1..cat_k, match_level and sim."""
+        return self._to_records(records, results, cand_lists)
+
+    def _select(
+        self, candidates: dict[tuple[str, ...], list[MatchResult]]
+    ) -> dict[tuple[str, ...], int]:
+        """LLM pick among each unique row's top-k; defaults to top-1 (index 0)."""
+        picks = {key: 0 for key in candidates}
+        if not self.selector:
+            return picks
+
+        jobs = [(key, cands) for key, cands in candidates.items() if len(cands) >= 2]
+        if not jobs:
+            return picks
+
+        choices = self.selector.select_all(
+            [(" > ".join(key), cands) for key, cands in jobs]
+        )
+        for (key, _), choice in zip(jobs, choices):
+            picks[key] = choice
+        return picks
+
+    def _to_records(self, records: list[io.Record],
+                    results: list[MatchResult | None],
+                    cand_lists: list[list[MatchResult] | None]) -> list[io.Record]:
+        """Input columns, then cat_1..cat_k, match_level, sim, and (when
+        selection is on) a human-readable rundown of the top-k candidates."""
         depth = max((r.level for r in results if r), default=0)
         out = []
-        for record, result in zip(records, results):
+        for record, result, cands in zip(records, results, cand_lists):
             row = dict(record)
             if result is None:
                 row.update({f"cat_{i + 1}": ERROR for i in range(depth)})
                 row["match_level"] = ERROR
                 row["sim"] = ERROR
+                if self.selector:
+                    row["candidates"] = ERROR
             else:
                 for i in range(depth):
                     row[f"cat_{i + 1}"] = result.path[i] if i < result.level else None
                 row["match_level"] = result.level
                 row["sim"] = result.sim
+                if self.selector:
+                    row["candidates"] = "\n".join(
+                        f"{i + 1}. {' > '.join(c.path)} ({c.sim:.3f})"
+                        for i, c in enumerate(cands or [])
+                    )
             out.append(row)
         return out

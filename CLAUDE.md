@@ -48,14 +48,16 @@ Violations raise from [catmatch/io.py](catmatch/io.py) `level_columns()`.
 config.yaml ─► main.py ─► catmatch.Matcher.match(records, taxonomy)
    .env ──────┘              │
                              ├─ io.py         four formats → list[dict]; contract check; clean()
-                             ├─ compress.py   input values > threshold_words → LLM (concurrent, retries)
+                             ├─ compact.py    last input level > threshold_words → LLM (prompts/compact_prompt.txt)
                              ├─ embedding.py  lazy SentenceTransformer, L2-normalised vectors
                              ├─ store.py      sqlite cache, TAXONOMY ONLY, key (text, model_name)
-                             └─ matchers.py   WeighedEmbeddingMatcher | TreeBasedMatcher
-                                              → output/ (xlsx | csv | json | jsonl)
+                             ├─ matchers.py   WeighedEmbeddingMatcher | TreeBasedMatcher, top-k ranked
+                             ├─ selection.py  (optional) LLM final pick among top-k (prompts/select_prompt.txt)
+                             ├─ llm.py        shared client/retry/concurrency base for compact.py + selection.py
+                             └─                → output/ (xlsx | csv | json | jsonl)
 ```
 
-- **Caching**: only taxonomy element embeddings are cached (`cache/embeddings.sqlite`). Input embeddings and compression results are recomputed every run, by design.
+- **Caching**: only taxonomy element embeddings are cached (`cache/embeddings.sqlite`). Input embeddings, compact and selection results are recomputed every run, by design.
 - **Vectors are L2-normalised at encode time**, and composed vectors are normalised again in `matchers.compose()`, so every `sim` is a real cosine. (The pre-refactor code used unnormalised dot products.)
 - **Level weights**: `matchers.weight(k, p, aj=2.5)` — log-scaled, sums to 1 over the p levels, deeper levels weigh more.
 
@@ -67,12 +69,18 @@ config.yaml ─► main.py ─► catmatch.Matcher.match(records, taxonomy)
 - `false` → depth is fixed at `max_level` (a branch that hits a leaf earlier still stops there).
 - `true` → `weighed_embedding` lets shallow prefixes compete in the global pool; `tree_based` puts every path the beam held at every level into the candidate pool, so the final weighed pick chooses the depth.
 
-**Output**: original input columns + `cat_1..cat_k` + `match_level` + `sim`. `k` is the deepest level any row reached; shallower rows leave the rest empty. A record with no usable text yields `'error'` in all three result columns.
+Both matchers' `match()` returns the top `k` candidates ranked by `sim` (`k=1` unless `selection.enabled`).
+
+**Compact** (`compact.*`): only the input's **last level** is compacted, and only when it's over `threshold_words`. The prompt (`compact.prompt_path`, default [prompts/compact_prompt.txt](prompts/compact_prompt.txt)) strips concept-test marketing copy down to a neutral "what it is" sentence; a reply of `UNCLEAR` or a failed call falls back to the original text.
+
+**Selection** (`selection.*`, off by default): when enabled, the matcher asks for `selection.top_k` candidates (must be `>= 2`) instead of one, and [catmatch/selection.py](catmatch/selection.py) asks an LLM (`selection.prompt_path`, default [prompts/select_prompt.txt](prompts/select_prompt.txt)) to pick among them, given the record's full level chain. LLM calls are deduped by unique row like everything else on the input side. A reply that doesn't parse to a valid index, after retries, falls back to the matcher's own top-1.
+
+**Output**: original input columns + `cat_1..cat_k` + `match_level` + `sim` (+ `candidates`, one ranked line per top-k path, when `selection.enabled`). `k` is the deepest level any row reached; shallower rows leave the rest empty. A record with no usable text yields `'error'` in all result columns.
 
 ## config.yaml / .env split
 
-- `.env` (gitignored): `api_key`, `base_url`, `model` for the compression LLM. `LLMConfig.from_env()` only overrides what `.env` actually sets; `api_key` has no default.
-- `config.yaml`: everything else, one section per component — `input` / `taxonomy` / `output` / `matching` / `embedding` / `compression` (with a nested `compression.llm` for behaviour: temperature, concurrency, retries, timeout, max output tokens).
+- `.env` (gitignored): `api_key`, `base_url`, `model` for the compact/selection LLM(s). `LLMConfig.from_env()` only overrides what `.env` actually sets; `api_key` has no default.
+- `config.yaml`: everything else, one section per component — `input` / `taxonomy` / `output` / `matching` / `embedding` / `compact` / `selection` (each of `compact` and `selection` carries a nested `llm` block for behaviour: temperature, concurrency, retries, timeout, max output tokens). A leftover `compression:` section (the old name) fails fast at `Config.from_yaml` with a pointer to this file.
 - All of it is dataclasses in [catmatch/config.py](catmatch/config.py); validation lives in `__post_init__`, so an illegal config fails at construction. As a module you can bypass YAML entirely and build `Config(...)` directly.
 
 ## Data layout conventions

@@ -13,8 +13,8 @@ output:
   path: "output/output.xlsx"            # xlsx | csv | json | jsonl
 
 matching:
-  algo: "tree_based"                    # weighed_embedding | tree_based
-  max_level: 3                          # deepest taxonomy level to match to
+  algo: "weighed_embedding"                    # weighed_embedding | tree_based
+  max_level: 6                         # deepest taxonomy level to match to
   flexible: true                        # true: level <= max_level; false: level == max_level
   beam_width: 3                         # tree_based only: candidates kept per level
 
@@ -24,13 +24,26 @@ embedding:
   batch_size: 12
   db_path: "cache/embeddings.sqlite"    # taxonomy embeddings only
 
-compression:
-  enabled: true                         # shorten over-long input values first
-  threshold_words: 200                  # anything longer goes through the LLM
+compact:
+  enabled: true                         # shorten the input's last (free-text) level
+  threshold_words: 20                   # anything longer goes through the LLM
+  prompt_path: "prompts/compact_prompt.txt"
   llm:
     # api_key / base_url / model live in .env (api_key is required there)
-    temperature: 0.0                    # compression must be reproducible
-    concurrency: 4
+    temperature: 0.0                    # compaction must be reproducible
+    concurrency: 16
     request_timeout: 60
     max_retries: 3
     max_output_tokens: 512
+
+selection:
+  enabled: True                        # let an LLM pick among the matcher's top-k
+  top_k: 10                              # must be >= 2 when enabled
+  prompt_path: "prompts/select_prompt.txt"
+  llm:
+    # api_key / base_url / model live in .env (api_key is required there)
+    temperature: 0.0
+    concurrency: 16
+    request_timeout: 60
+    max_retries: 3
+    max_output_tokens: 32

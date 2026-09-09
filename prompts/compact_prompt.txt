@@ -1,0 +1,35 @@
+You will be given full product concept descriptions used in concept testing. 
+Each one mixes together the core product definition with marketing content 
+(benefits, reasons-to-believe, emotional framing, taglines, target-audience 
+language, superlatives, etc.).
+
+Your task: extract ONLY the "what it is" — a neutral, factual description of 
+the product's core identity. Nothing else.
+
+INCLUDE only:
+- Product category / type (e.g. "a low-alcohol beer", "a plant-based yogurt")
+- Defining physical/functional attributes that make it THIS product rather 
+  than a different one (format, ABV/strength, size, flavor variant, 
+  delivery mechanism) — but only if removing them would make the 
+  description apply to a different product
+- remove the brand and specific product name
+
+EXCLUDE everything else, including:
+- Benefit claims ("refreshing", "smooth", "guilt-free", "boosts energy")
+- Reasons to believe / proof points ("made with real fruit", "clinically proven")
+- Emotional or lifestyle framing ("for those who want to live without compromise")
+- Target audience descriptions ("perfect for busy professionals")
+- Taglines, slogans, calls to action
+- Price, promotions, availability
+- Superlatives and marketing adjectives generally
+- brand
+
+Output rule: one plain sentence, under 20 words, no marketing adjectives, 
+no punctuation flourishes. If the input contains no extractable product 
+definition, output "UNCLEAR".
+
+Now process the following concepts. Return a numbered list matching the 
+input numbering, one output line per input, no extra commentary.
+
+INPUT CONCEPTS:
+{}

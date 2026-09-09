@@ -9,11 +9,12 @@ English only: there is no translation step, input must already be English.
 """
 
 from .config import (
-    CompressionConfig,
+    CompactConfig,
     Config,
     EmbeddingConfig,
     LLMConfig,
     MatchingConfig,
+    SelectionConfig,
 )
 from .io import load_input, load_taxonomy, read_records, write_records
 from .matcher import Matcher
@@ -25,7 +26,8 @@ __all__ = [
     "Config",
     "MatchingConfig",
     "EmbeddingConfig",
-    "CompressionConfig",
+    "CompactConfig",
+    "SelectionConfig",
     "LLMConfig",
     "load_input",
     "load_taxonomy",

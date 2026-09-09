@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 @dataclass
 class LLMConfig:
-    """Connection + behaviour of the compression LLM (OpenAI-compatible API)."""
+    """Connection + behaviour of a compact/selection LLM (OpenAI-compatible API)."""
 
     api_key: str
     base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -67,18 +67,53 @@ class LLMConfig:
 
 
 @dataclass
-class CompressionConfig:
-    """Shorten over-long input values before embedding them."""
+class CompactConfig:
+    """Shorten the input's last (free-text) level before embedding it."""
 
     enabled: bool = True
-    threshold_words: int = 200
+    threshold_words: int = 20
+    prompt_path: str = "prompts/compact_prompt.txt"
     llm: LLMConfig | None = None
 
     def __post_init__(self) -> None:
         if self.threshold_words <= 0:
             raise ValueError("threshold_words must be positive")
-        if self.enabled and self.llm is None:
-            self.llm = LLMConfig.from_env()
+        if self.enabled:
+            if not self.prompt_path.strip():
+                raise ValueError("prompt_path must not be empty")
+            _validate_prompt_file(self.prompt_path, "{}")
+            if self.llm is None:
+                self.llm = LLMConfig.from_env()
+
+
+@dataclass
+class SelectionConfig:
+    """Let an LLM make the final pick among the matcher's top-k candidates."""
+
+    enabled: bool = False
+    top_k: int = 3
+    prompt_path: str = "prompts/select_prompt.txt"
+    llm: LLMConfig | None = None
+
+    def __post_init__(self) -> None:
+        if self.enabled:
+            if self.top_k < 2:
+                raise ValueError("selection.top_k must be >= 2 when selection is enabled")
+            if not self.prompt_path.strip():
+                raise ValueError("prompt_path must not be empty")
+            _validate_prompt_file(self.prompt_path, "{product}", "{candidates}")
+            if self.llm is None:
+                self.llm = LLMConfig.from_env()
+
+
+def _validate_prompt_file(path: str, *placeholders: str) -> None:
+    p = Path(path)
+    if not p.is_file():
+        raise ValueError(f"prompt_path not found: {path}")
+    text = p.read_text(encoding="utf-8")
+    missing = [ph for ph in placeholders if ph not in text]
+    if missing:
+        raise ValueError(f"{path} is missing required placeholder(s): {', '.join(missing)}")
 
 
 @dataclass
@@ -122,11 +157,28 @@ class MatchingConfig:
             raise ValueError("beam_width must be positive")
 
 
+def _section_with_llm(raw: dict, name: str) -> dict:
+    """Pop the nested `llm:` block and build an `LLMConfig` for it, if enabled.
+
+    Both `compact` and `selection` are shaped the same way: behavioural knobs
+    plus a nested `llm` block for the connection/inference parameters, the
+    latter only needed when the section is actually enabled.
+    """
+    section = dict(raw.get(name, {}) or {})
+    llm_kwargs = section.pop("llm", {}) or {}
+    if section.get("enabled", True):
+        section["llm"] = LLMConfig.from_env(**llm_kwargs)
+    elif llm_kwargs:
+        section["llm"] = None
+    return section
+
+
 @dataclass
 class Config:
     matching: MatchingConfig = field(default_factory=MatchingConfig)
     embedding: EmbeddingConfig = field(default_factory=EmbeddingConfig)
-    compression: CompressionConfig = field(default_factory=CompressionConfig)
+    compact: CompactConfig = field(default_factory=CompactConfig)
+    selection: SelectionConfig = field(default_factory=SelectionConfig)
     # only used by the batch entry point; as a module these come in as arguments
     input_path: str | None = None
     taxonomy_path: str | None = None
@@ -138,17 +190,17 @@ class Config:
         with open(path, "r", encoding="utf-8") as f:
             raw = yaml.safe_load(f) or {}
 
-        comp = dict(raw.get("compression", {}) or {})
-        llm_kwargs = comp.pop("llm", {}) or {}
-        if comp.get("enabled", True):
-            comp["llm"] = LLMConfig.from_env(**llm_kwargs)
-        elif llm_kwargs:
-            comp["llm"] = None
+        if "compression" in raw:
+            raise ValueError(
+                "config.yaml has a stale 'compression' section -- it was replaced "
+                "by 'compact' (last-level-only, prompt-file-driven); see CLAUDE.md"
+            )
 
         return cls(
             matching=MatchingConfig(**(raw.get("matching", {}) or {})),
             embedding=EmbeddingConfig(**(raw.get("embedding", {}) or {})),
-            compression=CompressionConfig(**comp),
+            compact=CompactConfig(**_section_with_llm(raw, "compact")),
+            selection=SelectionConfig(**_section_with_llm(raw, "selection")),
             input_path=(raw.get("input", {}) or {}).get("path"),
             taxonomy_path=(raw.get("taxonomy", {}) or {}).get("path"),
             output_path=(raw.get("output", {}) or {}).get("path"),

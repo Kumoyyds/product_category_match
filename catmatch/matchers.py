@@ -1,7 +1,8 @@
 """The two matching algorithms.
 
 Both take the same inputs -- one vector per input record, one vector per
-taxonomy element -- and return a single path plus its similarity.
+taxonomy element -- and return the top `k` paths ranked by similarity (`k=1`
+by default; `k>1` feeds an LLM final-selection step).
 
     weighed_embedding  collapse each taxonomy path into one weighted vector and
                        compare all of them at once (the original algorithm)
@@ -52,11 +53,15 @@ def compose(texts: list[str], emb: dict[str, np.ndarray]) -> np.ndarray:
 
 
 def best_of(paths: list[Path], emb: dict[str, np.ndarray],
-            vector: np.ndarray) -> MatchResult:
-    """Score paths the weighed way -- one composed vector each -- and take the best."""
-    sims = [float(compose(list(p), emb) @ vector) for p in paths]
-    best = int(np.argmax(sims))
-    return MatchResult(list(paths[best]), sims[best])
+            vector: np.ndarray, k: int = 1) -> list[MatchResult]:
+    """Score paths the weighed way -- one composed vector each -- and rank them.
+
+    Returns the top `k` (descending by sim); shorter than `k` when there are
+    fewer than `k` paths to choose from.
+    """
+    sims = np.array([float(compose(list(p), emb) @ vector) for p in paths])
+    order = np.argsort(-sims)[:k]
+    return [MatchResult(list(paths[i]), float(sims[i])) for i in order]
 
 
 class WeighedEmbeddingMatcher:
@@ -85,10 +90,11 @@ class WeighedEmbeddingMatcher:
                     candidates.setdefault(path[:depth], None)
         return list(candidates)
 
-    def match(self, vector: np.ndarray) -> MatchResult:
+    def match(self, vector: np.ndarray, k: int = 1) -> list[MatchResult]:
+        """Rank all candidates against `vector`; return the top `k`."""
         sims = self.matrix @ vector
-        best = int(np.argmax(sims))
-        return MatchResult(list(self.candidates[best]), float(sims[best]))
+        order = np.argsort(-sims)[:k]
+        return [MatchResult(list(self.candidates[i]), float(sims[i])) for i in order]
 
 
 class TreeBasedMatcher:
@@ -153,5 +159,5 @@ class TreeBasedMatcher:
         pool.pop((), None)
         return list(pool)
 
-    def match(self, vector: np.ndarray) -> MatchResult:
-        return best_of(self._descend(vector), self.emb, vector)
+    def match(self, vector: np.ndarray, k: int = 1) -> list[MatchResult]:
+        return best_of(self._descend(vector), self.emb, vector, k=k)
